@@ -49,7 +49,11 @@ read and write m3u and pls playlists
 PROBLEMS
 ---------------
 I think I might have fixed this but two tracks may play at the same time if you use the controls quickly, you may need to SSH in form another computer and use top -upi and k to kill the omxplayer.bin
-Seek forward 600 and see back 600 appears to be broken in omxplayer
+- Seek forward 600 and see back 600 appears to be broken in omxplayer (krugg: on my system this works fine but see below)
+- krugg: Bad: Go to next or previous track scrolls listbox too
+- krugg: Bad: Seeking forward 600 or backwards 600 scrolls listbox too
+- krugg: If one selects another entry and press PLAY button while playing a current entry the omxplayer is not really getting stopped in some cases
+         (current most working workaround is to reselect the entry to play and press PLAY button again)
 
 
 krugg: Position problems with pausing a file or when playing a mp3 file seemed to be fixed for all files I have tested with
@@ -57,6 +61,7 @@ fixed: Position thread does not seem to take account of  pause
 fixed: mp3 tracks always show position as zero.
 added: support for playing youtube URL (you need to install youtube-dl from http://rg3.github.io/youtube-dl/ first)
 added: support for import of m3u playlist files, it rewrites file path to match raspberry's filesystem and imports only valid entries
+
 
 """
 
