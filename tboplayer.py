@@ -54,7 +54,7 @@ I think I might have fixed this but two tracks may play at the same time if you 
 - krugg: Bad: Seeking forward 600 or backwards 600 scrolls listbox too
 - krugg: If one selects another entry and press PLAY button while playing a current entry the omxplayer is not really getting stopped in some cases
          (current most working workaround is to reselect the entry to play and press PLAY button again)
-
+- krugg: Missing differentiation of relative and absolute paths for m3u playlist import (currently only relative path or URL allowed)
 
 krugg: Position problems with pausing a file or when playing a mp3 file seemed to be fixed for all files I have tested with
 fixed: Position thread does not seem to take account of  pause
