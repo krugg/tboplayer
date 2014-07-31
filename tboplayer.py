@@ -50,8 +50,13 @@ PROBLEMS
 ---------------
 I think I might have fixed this but two tracks may play at the same time if you use the controls quickly, you may need to SSH in form another computer and use top -upi and k to kill the omxplayer.bin
 Seek forward 600 and see back 600 appears to be broken in omxplayer
-Position thread does not seem to take account of  pause
-mp3 tracks always show position as zero.
+
+
+krugg: Position problems with pausing a file or when playing a mp3 file seemed to be fixed for all files I have tested with
+fixed: Position thread does not seem to take account of  pause
+fixed: mp3 tracks always show position as zero.
+added: support for playing youtube URL (you need to install youtube-dl from http://rg3.github.io/youtube-dl/ first)
+added: support for import of m3u playlist files, it rewrites file path to match raspberry's filesystem and imports only valid entries
 
 """
 
@@ -64,6 +69,7 @@ mp3 tracks always show position as zero.
 
 import pexpect
 import re
+import string, os
 
 from threading import Thread
 from time import sleep
@@ -73,10 +79,15 @@ class OMXPlayer(object):
     _FILEPROP_REXP = re.compile(r".*audio streams (\d+) video streams (\d+) chapters (\d+) subtitles (\d+).*")
     _VIDEOPROP_REXP = re.compile(r".*Video codec ([\w-]+) width (\d+) height (\d+) profile (\d+) fps ([\d.]+).*")
     _AUDIOPROP_REXP = re.compile(r"Audio codec (\w+) channels (\d+) samplerate (\d+) bitspersample (\d+).*")
-    _STATUS_REXP = re.compile(r"V :\s*([\d.]+).*")
+# krugg: changed pattern to match space characters correctly
+#    _STATUS_REXP = re.compile(r"V:\s*([\d.]+)")
+# krugg: instead of using V use M output (seemed to be video position in 'ns')
+    _STATUS_REXP = re.compile(r"M:\s*([\d.]+)\s")
     _DONE_REXP = re.compile(r"have a nice day.*")
+    _YT_REXP = re.compile(r"(.+)")
 
     _LAUNCH_CMD = '/usr/bin/omxplayer -s %s %s'
+    _YTLAUNCH_CMD = '/usr/local/bin/youtube-dl -g %s'
     _PAUSE_CMD = 'p'
     _TOGGLE_SUB_CMD = 's'
     _QUIT_CMD = 'q'
@@ -92,10 +103,36 @@ class OMXPlayer(object):
         #******* KenT signals to tell the gui playing has started and ended
         self.start_play_signal = False
         self.end_play_signal=False
-        cmd = self._LAUNCH_CMD % (mediafile, args)
+
+	# +++++++++ krugg: Accept youtube URLs
+	if "youtube" not in mediafile:
+	        cmd = self._LAUNCH_CMD % (mediafile, args)
+		print "              cmd: " + cmd
+	else:
+		# krugg: retrieve youtube video url for playback with external youtube-dl
+		ytcmd = self._YTLAUNCH_CMD % (mediafile)
+		#print "      Youtube URL: " + mediafile
+		#print "      Youtube cmd: " + ytcmd
+		self.ytprocess = pexpect.spawn(ytcmd)
+		#self.ytprocess.logfile = sys.stdout
+		ytmediafound = self.ytprocess.expect([self._YT_REXP,
+						     pexpect.TIMEOUT,
+                                            	     pexpect.EOF])
+		if ytmediafound == 0:
+			ytmediafile = self.ytprocess.match.group(1)
+			#print "      Youtube video URL: " + ytmediafile
+		        cmd = self._LAUNCH_CMD % (ytmediafile, args)
+		else:
+			self.end_play_signal=True
+			return
+	# +++++++++
+
         self._process = pexpect.spawn(cmd)
         # fout= file('logfile.txt','w')
-        # self._process.logfile_send = sys.stdout
+	# krugg: changed as given in docs at http://pexpect.readthedocs.org/en/latest/overview.html#debugging
+	# krugg: -> comment out if you want to see output from omxplayer at stdout, useful when trying to
+	#           look for video position data
+        #self._process.logfile = sys.stdout
         
         # ******* KenT dictionary generation moved to a function so it can be omitted.
         if do_dict:
@@ -117,9 +154,12 @@ class OMXPlayer(object):
 
         # **** KenT Added self.position=0. Required if dictionary creation is commented out. Possibly best to leave it in even if not
         #         commented out in case gui reads position before it is first written.
-        self.position=-100.0
+	# krugg: nice to see if playing has started (or sometimes not..) but now we have better appearance ;)
+        self.position=-60.0
         
         while True:
+	# krugg: make thread a bit happier when errors occur
+	  try:
             index = self._process.expect([self._STATUS_REXP,
                                             pexpect.TIMEOUT,
                                             pexpect.EOF,
@@ -128,10 +168,15 @@ class OMXPlayer(object):
             elif index in (2, 3):
                 # ******* KenT added
                 self.end_play_signal=True
+		# krugg: added for 'setting back' effect after stopping successfully
+		self.position=0.0
                 break
             else:
-                self.position = float(self._process.match.group(1))                
-            sleep(0.05)
+		# krugg: divide M factor (nanoseconds) to get seconds (see log output of omxplayer if commented out above)
+                self.position = float(self._process.match.group(1)) / 1000000
+	  except Exception:
+		break
+          sleep(0.05)
 
 
 
@@ -342,6 +387,7 @@ class TBOPlayer:
             # we are playing so just update time display
             # self.monitor("Position: " + str(self.omx.position))
             if self.paused == False:
+                #self.display_time.set(self.omx.position)
                 self.display_time.set(self.time_string(self.omx.position))
             else:
                 self.display_time.set("Paused")           
@@ -504,14 +550,15 @@ class TBOPlayer:
 
         #root is the Tkinter root widget
         self.root = tk.Tk()
-        self.root.title("GUI for OMXPlayer")
+        self.root.title("OMXPlayer")
 
         self.root.configure(background='grey')
         # width, height, xoffset, yoffset
-        self.root.geometry('408x300+750+300')
+	# krugg: doubled window width
+        self.root.geometry('660x300+350+300')
         self.root.resizable(False,False)
 
-        #defne response to main window closing
+        #define response to main window closing
         self.root.protocol ("WM_DELETE_WINDOW", self.app_exit)
 
         # bind some display fields
@@ -543,6 +590,8 @@ class TBOPlayer:
         listmenu = Menu(menubar, tearoff=0, bg="grey", fg="black")
         menubar.add_cascade(label='Playlist', menu = listmenu)
         listmenu.add_command(label='Open', command = self.open_list)
+        #listmenu.add_command(label='Open .pls', command = self.open_m3ulist)
+        listmenu.add_command(label='Open .m3u', command = self.open_m3ulist)
         listmenu.add_command(label='Save', command = self.save_list)
         listmenu.add_command(label='Clear', command = self.clear_list)
 
@@ -602,15 +651,16 @@ class TBOPlayer:
 
 
 # define display of playlist
+# krugg: doubled width of listbox
         self.track_titles_display = Listbox(self.root, selectmode=SINGLE, height=15,
-                                    width = 40, bg="white",
-                                    fg="black")
+                                    width = 80, bg="white",
+                                    fg="black")      
         self.track_titles_display.grid(row=4, column=0, columnspan=7)
         self.track_titles_display.bind("<ButtonRelease-1>", self.select_track)
 
 # scrollbar for displaylist
         scrollbar = Scrollbar(self.root, command=self.track_titles_display.yview, orient=tk.VERTICAL)
-        scrollbar.grid(row = 4, column=6,sticky='ns')
+        scrollbar.grid(row = 4, column=7,sticky='ns')
         self.track_titles_display.config(yscrollcommand=scrollbar.set)
 
 
@@ -856,6 +906,99 @@ class TBOPlayer:
         self.playlist.select(0)
         self.display_selected_track(0)
         return
+
+
+    def expand_relative_path(self, base, path):
+	if "http" in path:
+	    return path
+	else:
+	    # check filename's letter cases     .replace("'", "\\''")
+	    checkfilepath = base + path.replace("\\", "/")
+	    #print "check filepath: " + "'" + checkfilepath + "'"
+	    checkfile = os.path.basename(checkfilepath)
+	    checkpath = os.path.dirname(checkfilepath)
+	    #print "check directory: " + "'" + checkpath + "'"
+	    try:
+		dirs = os.listdir(checkpath)
+		if not checkfile in dirs:
+		    for item in dirs:
+			if item.lower() == checkfile.lower():
+			    return checkpath + "/" + item
+		else:
+		    # filepath is OK
+		    return checkfilepath
+	    except OSError:
+		print "really wrong directory: " + "'" + checkpath + "' for file: " + checkfile
+		return ""
+	    # if nothing helps
+	    print "file not found in directory: " + "'" + checkpath + "' for file: " + checkfile
+	    return ""
+
+
+    def open_m3ulist(self):
+        """
+        opens a saved playlist
+        playlists are stored in m3u file format
+        """
+
+        self.filename.set(tkFileDialog.askopenfilename(initialdir=self.options.initial_playlist_dir,
+                        defaultextension = ".m3u",
+                        filetypes = [('m3u files', '.m3u')],
+			multiple=False))
+        filename = self.filename.get()
+        if filename=="":
+            return
+
+	# ***********************************************
+	# get path of playlist file to complete relative paths within
+	basedir = os.path.dirname(filename) + "/"
+	if len(basedir) <= 1:
+	    basedir = os.getcwd() + "/"
+	
+	# some variables   
+	hasExtInf = False
+	strExtInf = ""
+	result = list()
+	
+	# extract playlist:
+	for line in file(filename):
+	    if line.startswith('#EXTINF'):
+	        # extract extended file info (for next line entry)
+	        spline = line.replace("#EXTINF:", "").strip().split(",")
+	        hasExtInf = True
+	        strExtInf = spline[1].strip()
+	        continue
+	    if not line.startswith('#EXT'):
+	        checkedpath = self.expand_relative_path(basedir, line.strip())
+		if len(checkedpath) > 0:
+		        if hasExtInf == True:
+		            # append entry with extended file info
+		            result.append([self.expand_relative_path(basedir, line.strip()), strExtInf])
+		            hasExtInf = False
+		            strExtInf = ""
+		        else:
+		            # append entry with fallback on filename only
+		            result.append([self.expand_relative_path(basedir, line.strip()), os.path.splitext(os.path.basename(line.replace("\\", "/").strip()))[0]])
+	
+	# ***********************************************
+
+        #ifile  = open(filename, 'rb')
+        #pl=csv.reader(ifile)
+
+        self.playlist.clear()
+        self.track_titles_display.delete(0,self.track_titles_display.size())
+
+        for pl_row in result:
+            if len(pl_row) != 0:
+                self.playlist.append([pl_row[0],pl_row[1],'',''])
+                self.track_titles_display.insert(END, pl_row[1])
+
+        #ifile.close()
+
+        self.playlist.select(0)
+        self.display_selected_track(0)
+        return
+
 
 
     def clear_list(self):
@@ -1197,6 +1340,6 @@ class PlayList():
 
 
 if __name__ == "__main__":
-    datestring=" 20 Nov 2012"
+    datestring=" 29 Jul 2014"
     bplayer = TBOPlayer()
 
